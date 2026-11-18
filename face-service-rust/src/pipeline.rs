@@ -23,6 +23,41 @@ use crate::ortutil::ModelSession;
 use crate::scrfd::{self, Face};
 use crate::types::{EmbeddingResponse, Liveness, VerifyResponse};
 
+#[derive(Clone, Copy)]
+enum Recognition {
+    Skip,
+    IfLive,
+    Always,
+}
+
+impl Recognition {
+    fn requested(require_liveness: bool) -> Self {
+        if require_liveness { Self::IfLive } else { Self::Always }
+    }
+
+    fn should_run(self, is_real: bool) -> bool {
+        match self {
+            Self::Skip => false,
+            Self::IfLive => is_real,
+            Self::Always => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Recognition;
+
+    #[test]
+    fn recognition_runs_only_when_requested_and_allowed() {
+        for live in [true, false] {
+            assert!(!Recognition::Skip.should_run(live));
+            assert!(Recognition::requested(false).should_run(live));
+            assert_eq!(Recognition::requested(true).should_run(live), live);
+        }
+    }
+}
+
 /// One loaded copy of each model, leased together as a unit.
 type Sessions = (ModelSession, ModelSession, ModelSession);
 
@@ -127,7 +162,7 @@ impl FacePipeline {
         require_liveness: bool,
         prob_threshold: f32,
     ) -> Result<VerifyResponse> {
-        let Some(analysis) = self.analyze(bytes, prob_threshold, true)? else {
+        let Some(analysis) = self.analyze(bytes, prob_threshold, Recognition::requested(require_liveness))? else {
             return Ok(VerifyResponse::no_face(threshold));
         };
         if require_liveness && !analysis.liveness.is_real {
@@ -135,7 +170,7 @@ impl FacePipeline {
         }
         let live = analysis
             .embedding
-            .expect("analyze computed an embedding because need_embedding=true");
+            .expect("recognition requested and liveness gate passed");
         if live.len() != stored.len() {
             anyhow::bail!(
                 "embedding length mismatch: live={} stored={}",
@@ -185,7 +220,7 @@ impl FacePipeline {
         require_liveness: bool,
         prob_threshold: f32,
     ) -> Result<EmbeddingResponse> {
-        let Some(analysis) = self.analyze(bytes, prob_threshold, true)? else {
+        let Some(analysis) = self.analyze(bytes, prob_threshold, Recognition::requested(require_liveness))? else {
             return Ok(EmbeddingResponse::no_face());
         };
         if require_liveness && !analysis.liveness.is_real {
@@ -193,14 +228,14 @@ impl FacePipeline {
         }
         let live = analysis
             .embedding
-            .expect("analyze computed an embedding because need_embedding=true");
+            .expect("recognition requested and liveness gate passed");
         Ok(EmbeddingResponse::ok(live, analysis.liveness))
     }
 
     /// `POST /liveness` path: decode → detect → MiniFAS classify, with no
     /// recognition pass (mirrors `app.py::liveness_check`).
     pub fn liveness(&self, bytes: &[u8], prob_threshold: f32) -> Liveness {
-        match self.analyze(bytes, prob_threshold, false) {
+        match self.analyze(bytes, prob_threshold, Recognition::Skip) {
             Ok(Some(analysis)) => analysis.liveness,
             Ok(None) => Liveness::no_face(),
             Err(err) => {
@@ -213,7 +248,7 @@ impl FacePipeline {
     /// Shared hot path behind `/verify`, `/embedding` and `/liveness`: decode,
     /// detect the largest face, run MiniFAS on its bbox, and (when asked) align
     /// + recognize. Returns `Ok(None)` when no face is present.
-    fn analyze(&self, bytes: &[u8], prob_threshold: f32, need_embedding: bool) -> Result<Option<Analysis>> {
+    fn analyze(&self, bytes: &[u8], prob_threshold: f32, recognition: Recognition) -> Result<Option<Analysis>> {
         let img: RgbImage = imageutil::decode(bytes)?;
 
         let mut lease = self.acquire();
@@ -233,7 +268,7 @@ impl FacePipeline {
             Liveness::error(&err.to_string())
         });
 
-        let embedding = if need_embedding {
+        let embedding = if recognition.should_run(liveness.is_real) {
             let aligned = norm_crop(&img, &face.kps, self.cfg.rec_input)
                 .context("face alignment failed")?;
             Some(embed::embed(rec, &aligned, self.cfg.rec_input)?)

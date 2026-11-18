@@ -19,7 +19,7 @@ pub const DET_STD: [f32; 3] = [128.0, 128.0, 128.0];
 /// Decode JPEG/PNG/WebP bytes to an 8-bit RGB image (replaces `PIL.open().convert("RGB")`).
 pub fn decode(bytes: &[u8]) -> Result<RgbImage> {
     let img = image::load_from_memory(bytes).context("failed to decode image bytes")?;
-    Ok(img.to_rgb8())
+    Ok(img.into_rgb8())
 }
 
 /// Letterbox an RGB image into a square `size x size` detection blob.
@@ -47,21 +47,8 @@ pub fn det_blob(img: &RgbImage, size: usize) -> (Vec<f32>, f32) {
     };
     let det_scale = new_h as f32 / oh as f32;
 
-    let resized = resize_linear(img, new_w, new_h);
-
-    let plane = size * size;
-    let mut blob = vec![0.0f32; 3 * plane]; // zero pad (black border)
-    for y in 0..new_h {
-        for x in 0..new_w {
-            let p = resized.get_pixel(x as u32, y as u32).0; // [R, G, B]
-            // InsightFace detection uses blobFromImage(bgr, swapRB=True), so the
-            // model planes are R,G,B. We already hold RGB, so feed p[c] directly.
-            for c in 0..3 {
-                let v = p[c] as f32;
-                blob[c * plane + y * size + x] = (v - DET_MEAN[c]) / DET_STD[c];
-            }
-        }
-    }
+    let mut blob = vec![0.0f32; 3 * size * size];
+    resize_linear(img, new_w, new_h, size, &mut blob);
     (blob, det_scale)
 }
 
@@ -73,40 +60,56 @@ pub fn det_blob(img: &RgbImage, size: usize) -> (Vec<f32>, f32) {
 /// `FilterType::Triangle`, which averages a widening window). Matching OpenCV
 /// here keeps the detected landmarks — and therefore the recognition crop —
 /// aligned with the InsightFace reference.
-fn resize_linear(img: &RgbImage, dst_w: usize, dst_h: usize) -> RgbImage {
+fn resize_linear(img: &RgbImage, dst_w: usize, dst_h: usize, size: usize, blob: &mut [f32]) {
     let (sw, sh) = (img.width() as f32, img.height() as f32);
     let scale_x = sw / dst_w as f32;
     let scale_y = sh / dst_h as f32;
     let last_x = img.width().saturating_sub(1);
     let last_y = img.height().saturating_sub(1);
 
-    let mut out = RgbImage::new(dst_w as u32, dst_h as u32);
+    let columns: Vec<_> = (0..dst_w).map(|dx| {
+        let fx = ((dx as f32 + 0.5) * scale_x - 0.5).clamp(0.0, sw - 1.0);
+        let x0 = fx as u32;
+        (x0, (x0 + 1).min(last_x), fx - x0 as f32)
+    }).collect();
     for dy in 0..dst_h {
-        for dx in 0..dst_w {
-            // half-pixel-center source coordinate, clamped to the image extent
-            let fx = ((dx as f32 + 0.5) * scale_x - 0.5).clamp(0.0, sw - 1.0);
-            let fy = ((dy as f32 + 0.5) * scale_y - 0.5).clamp(0.0, sh - 1.0);
-            let x0 = fx.floor() as u32;
-            let y0 = fy.floor() as u32;
-            let x1 = (x0 + 1).min(last_x);
-            let y1 = (y0 + 1).min(last_y);
-            let ax = fx - x0 as f32;
-            let ay = fy - y0 as f32;
+        let fy = ((dy as f32 + 0.5) * scale_y - 0.5).clamp(0.0, sh - 1.0);
+        let y0 = fy as u32;
+        let y1 = (y0 + 1).min(last_y);
+        let ay = fy - y0 as f32;
+        for (dx, &(x0, x1, ax)) in columns.iter().enumerate() {
 
             let p00 = img.get_pixel(x0, y0).0;
             let p10 = img.get_pixel(x1, y0).0;
             let p01 = img.get_pixel(x0, y1).0;
             let p11 = img.get_pixel(x1, y1).0;
 
-            let px = out.get_pixel_mut(dx as u32, dy as u32);
             for c in 0..3 {
                 let top = p00[c] as f32 * (1.0 - ax) + p10[c] as f32 * ax;
                 let bot = p01[c] as f32 * (1.0 - ax) + p11[c] as f32 * ax;
-                px.0[c] = (top * (1.0 - ay) + bot * ay).round().clamp(0.0, 255.0) as u8;
+                let v = (top * (1.0 - ay) + bot * ay).round().clamp(0.0, 255.0);
+                blob[c * size * size + dy * size + dx] = (v - DET_MEAN[c]) / DET_STD[c];
             }
         }
     }
-    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detection_blob_preserves_rounding_channels_and_padding() {
+        let img = RgbImage::from_fn(4, 2, |x, y| {
+            image::Rgb([(2 * x + y) as u8, 100, 255])
+        });
+        let (blob, scale) = det_blob(&img, 2);
+        let norm = |v: f32| (v - 127.5) / 128.0;
+        assert_eq!(scale, 0.5);
+        assert_eq!(blob, [norm(2.0), norm(6.0), 0.0, 0.0,
+                          norm(100.0), norm(100.0), 0.0, 0.0,
+                          norm(255.0), norm(255.0), 0.0, 0.0]);
+    }
 }
 
 /// 2x3 affine matrix mapping source coords -> destination coords.

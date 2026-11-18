@@ -37,13 +37,13 @@ pub async fn liveness(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Json<Liveness> {
-    let mut image: Option<Vec<u8>> = None;
+    let mut image: Option<axum::body::Bytes> = None;
     let mut prob_threshold = 0.5_f32;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
-            "file" => image = field.bytes().await.ok().map(|b| b.to_vec()),
+            "file" => image = field.bytes().await.ok(),
             "threshold" => {
                 if let Some(t) = field.text().await.ok() {
                     prob_threshold = t.trim().parse::<f32>().unwrap_or(prob_threshold);
@@ -77,7 +77,7 @@ pub async fn verify(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Json<VerifyResponse> {
-    let mut image: Option<Vec<u8>> = None;
+    let mut image: Option<axum::body::Bytes> = None;
     let mut stored_raw: Option<String> = None;
     let mut threshold = 0.40_f32;
     let mut require_liveness = true;
@@ -86,7 +86,7 @@ pub async fn verify(
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
-            "file" => image = field.bytes().await.ok().map(|b| b.to_vec()),
+            "file" => image = field.bytes().await.ok(),
             "stored_embedding" => stored_raw = field.text().await.ok(),
             "threshold" => {
                 if let Some(t) = field.text().await.ok() {
@@ -125,7 +125,8 @@ pub async fn verify(
     };
 
     let stored: Vec<f32> = match serde_json::from_str::<Vec<f32>>(&stored_json) {
-        Ok(v) => v,
+        Ok(v) if v.len() == 512 => v,
+        Ok(_) => return Json(VerifyResponse::bad_embedding("expected 512 values")),
         Err(e) => return Json(VerifyResponse::bad_embedding(&e.to_string())),
     };
 
@@ -152,14 +153,14 @@ pub async fn embedding(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Json<EmbeddingResponse> {
-    let mut image: Option<Vec<u8>> = None;
+    let mut image: Option<axum::body::Bytes> = None;
     let mut require_liveness = true;
     let mut prob_threshold = 0.5_f32;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
-            "file" => image = field.bytes().await.ok().map(|b| b.to_vec()),
+            "file" => image = field.bytes().await.ok(),
             "require_liveness" => {
                 if let Some(v) = field.text().await.ok() {
                     require_liveness = parse_bool(&v, require_liveness);
