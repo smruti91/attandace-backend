@@ -1,0 +1,7 @@
+/target
+
+# ONNX models are NOT vendored (InsightFace downloads buffalo_l to
+# ~/.insightface on first run). Drop the detection + recognition ONNX files in
+# here, or point FACE_DET_MODEL / FACE_REC_MODEL at wherever they live.
+/models/*.onnx
+!models/.gitkeep

@@ -1,0 +1,19 @@
+# You usually do NOT need to place anything here: the Docker build's `models`
+# stage auto-fetches buffalo_l (det_10g.onnx + w600k_r50.onnx) and bakes them
+# into the image. See ../Dockerfile.
+#
+# Put files here ONLY if you want to override the auto-fetched models — that
+# requires re-enabling the bind mount in server/docker-compose.yml
+# (./face-service-rust/models:/app/models), which shadows the baked-in copy.
+#
+# Required names (InsightFace buffalo_l):
+#   det_10g.onnx     (SCRFD-10GF detector)
+#   w600k_r50.onnx   (wbob glint360k/w600k recognition, 512-d)
+# Grab them manually from ~/.insightface/models/buffalo_l/ or the release pack:
+#   https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+#
+# These two are preserved from the retired Python service and are NOT used by
+# the current Rust /verify (passthrough liveness); kept for the future
+# MiniFAS anti-spoof port. See ../src/main.rs crate header:
+#   best_model_quantized.onnx  (MiniFAS liveness)
+#   detector_quantized.onnx    (MiniFAS face detector)

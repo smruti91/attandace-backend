@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit=$?\")",
+      "Read(//tmp/**)",
+      "Read(//d/react-projects/react-native/attandance/lks/**)",
+      "Bash(npx vite *)",
+      "Bash(PGPASSWORD=postgres psql *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5000/health)"
+    ]
+  }
+}

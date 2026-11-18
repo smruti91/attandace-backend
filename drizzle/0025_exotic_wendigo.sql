@@ -1,0 +1,1 @@
+ALTER TABLE "employee_violations" ADD COLUMN "evidence_image_path" varchar(500);

@@ -1,0 +1,1 @@
+ALTER TABLE "attendance_logs" ADD COLUMN "device_info" varchar(200);

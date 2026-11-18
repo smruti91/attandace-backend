@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "att_logs_checkin_once_idx" ON "attendance_logs" USING btree ("employee_id","attendance_date","site_id") WHERE "attendance_logs"."action" = 'check-in';--> statement-breakpoint
+CREATE UNIQUE INDEX "att_logs_checkout_once_idx" ON "attendance_logs" USING btree ("employee_id","attendance_date","site_id") WHERE "attendance_logs"."action" = 'check-out';

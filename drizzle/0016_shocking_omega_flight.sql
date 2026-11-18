@@ -1,0 +1,1 @@
+ALTER TABLE "visit_location_points" ALTER COLUMN "site_id" DROP NOT NULL;

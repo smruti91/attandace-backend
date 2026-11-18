@@ -1,0 +1,1 @@
+CREATE INDEX "att_logs_attdate_site_idx" ON "attendance_logs" USING btree ("attendance_date","site_id");

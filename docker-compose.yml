@@ -1,0 +1,61 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  postgresdb:
+    image: pgvector/pgvector:pg17
+    container_name: postgresdb
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: LKS
+    volumes:
+      - 'postgres_data:/var/lib/postgresql/data'
+  # Face verification service — Rust + ONNX Runtime (single Dockerfile).
+  # The former Python/InsightFace sidecar has been removed; this is now the one
+  # face service the Node app talks to via FACE_API_URL / INSIGHTFACE_URLS.
+  face-service:
+    build:
+      context: ./face-service-rust
+
+    container_name: face-service
+
+    ports:
+      - "5000:5000"
+
+    environment:
+      FACE_MODEL_DIR: /app/models
+      # One ONNX session triple (det + rec + MiniFAS) per inference slot — a
+      # punch only proceeds while a slot is free, so this is the concurrency
+      # ceiling at peak check-in. 2 is measured, not guessed: four simultaneous
+      # /verify calls on this 12-core box took 1.8-9.3 s each at 2 slots, 5.8-11.5 s
+      # at 3, and 8.1-21.4 s at 4 (memory 0.87 / 1.16 / 1.48 GiB). Raising it does
+      # NOT help, because one request already spreads across most cores inside
+      # ONNX Runtime — extra sessions only add thread contention. A lone punch is
+      # ~1.9-3.4 s at any setting. To really grow peak throughput add replicas
+      # behind a pooled URL, or move to a bigger box.
+      FACE_RUST_SESSIONS: "2"
+
+    # Models (det_10g.onnx + w600k_r50.onnx) are auto-fetched and baked into the
+    # image by the Dockerfile's `models` stage, so no volume is needed here. To
+    # use your own buffalo_l files instead, add a mount that shadows the baked
+    # copy (drop the two .onnx into ./face-service-rust/models first):
+    #   volumes:
+    #     - ./face-service-rust/models:/app/models
+    restart: unless-stopped
+
+    depends_on:
+      - postgresdb
+
+volumes:
+  postgres_data:
+  redis_data:
